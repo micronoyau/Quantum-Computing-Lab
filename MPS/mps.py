@@ -28,6 +28,7 @@ class QuantumComputer :
     CNOT = np.array([[1,0,0,0],[0,1,0,0],[0,0,0,1],[0,0,1,0]])
     SWAP = np.array([[1,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]])
 
+
     def __init__ (self, N, khi):
         """
         [N] is the number of qbits
@@ -38,12 +39,14 @@ class QuantumComputer :
         self.khi = khi
         self.mps = list() # List of tensors
 
-        # First tensor of rank 2 (first qbit)
+        # First tensor of rank 2 (first qbit, virtual, not used)
         self.mps.append ( np.zeros((2, khi)) )
-        # Tensors of rank 3 (qbits in the middle)
-        for i in range ( N-2 ):
+
+        # Tensors of rank 3 (qbits in the middle, used)
+        for i in range ( N ):
             self.mps.append ( np.zeros((2, khi, khi)) )
-        # Last tensor of rank 2
+
+        # Last tensor of rank 2 (last qbit, virtual, not used)
         self.mps.append ( np.zeros((2, khi)) )
 
         # One possible MPS state for representing |0>
@@ -59,22 +62,19 @@ class QuantumComputer :
         [qbit] is the qbit on which we apply the 1 qbit gate
         [U] is the unitary matrix corresponding to the gate : np.array
         """
-        # If only 2 indices
-        if (qbit == 0 or qbit == self.N-1):
-            # Efficient tensor contraction
-            self.mps[qbit] = np.einsum('ij,jk', U, self.mps[qbit])
-
-        else:
-            # Tensor contraction
-            self.mps[qbit] = np.einsum('ij,jkl', U, self.mps[qbit])
+        assert qbit >=0 and qbit < self.N, "Provided qbit index is out of bounds !"
+        # Efficient tensor contraction
+        self.mps[qbit+1] = np.einsum('ij,jkl', U, self.mps[qbit+1])
 
 
     def gate_2qbit_adj (self, U, qbit):
         """
         Apply unitary 2 qbit gate on adjacent qbits [qbit] and [qbit]+1
         """
+        assert qbit >= 0 and qbit < self.N-1, "Provided qbit index is out of bounds !"
+
         # Step 1
-        T = np.einsum('ikl,jlm', self.mps[qbit+1], self.mps[qbit])
+        T = np.einsum('ikl,jlm', self.mps[qbit+2], self.mps[qbit+1])
 
         # Step 2
         U_tilde = np.zeros((2,2,2,2))
@@ -125,9 +125,9 @@ class QuantumComputer :
         for i in range (2):
             for k in range (self.khi):
                 for l in range (self.khi):
-                    self.mps[qbit+1][i][k][l] = X[i][k][l] * S[l]
+                    self.mps[qbit+2][i][k][l] = X[i][k][l] * S[l]
 
-        self.mps[qbit] = Y
+        self.mps[qbit+1] = Y
 
 
     def get_ket (self):
@@ -139,13 +139,11 @@ class QuantumComputer :
         # Tensor contraction of the MPS : starting from the right
         tens = self.mps[0]
 
-        for i in range(1, self.N-1):
+        for i in range(1, self.N+1):
             tens = np.einsum (tens, list(range(1, i+2)), self.mps[i], [0, i+2, i+1])
-            #tens = np.einsum (tens, list(range(i+1)), self.mps[i], [i+1,i,i+2])
 
         # Last site to the left
-        #tens = np.einsum (tens, list(range(self.N)), self.mps[-1], [self.N, self.N-1])
-        tens = np.einsum (tens, list(range(1, self.N+1)), self.mps[-1], [0, self.N])
+        tens = np.einsum (tens, list(range(1, self.N+3)), self.mps[-1], [0, self.N+2])
 
         # Adding up values to the ket
         ket = np.array( [0.0] * (2**self.N) )
@@ -153,9 +151,10 @@ class QuantumComputer :
         for i in range( 2**self.N ):
             # Neat hack to write down ket[i] = tens[i_{N-1}]...[i_1][i_0]
             i_bin = dec2bin( i, self.N )
-            sub = tens
+            sub = tens[0]
             for j in i_bin:
                 sub = sub[j]
+            sub = sub[0]
             ket[i] = sub
 
         return ket 
@@ -183,11 +182,27 @@ class QuantumComputer :
     def t (self, qbit):
         self.gate_1qbit (QuantumComputer.T, qbit)
 
-    def swap (self, qbit):
+    def swap_adj (self, qbit):
         """
         SWAP two adjacent qbits [qbit] and [qbit]+1
         """
         self.gate_2qbit_adj (QuantumComputer.SWAP, qbit)
+
+
+    def swap (self, qbit1, qbit2):
+        """
+        SWAP two qbits [qbit1] and [qbit2]
+        """
+        a = min (qbit1, qbit2)
+        b = max (qbit1, qbit2)
+
+        # Bring a next to b, where a takes the place of b
+        for i in range (a, b):
+            self.swap_adj (i)
+
+        # Bring b to the former place of a
+        for i in range (b-2, a-1, -1):
+            self.swap_adj (i)
 
 
     def gate_2qbit (self, U, qbit1, qbit2):
@@ -199,29 +214,25 @@ class QuantumComputer :
 
         # First swap adjacent qbits to bring qbit1 near to qbit2
         for i in range (a, b-1):
-            self.swap (i)
+            self.swap_adj (i)
 
         # In case of non symmetric gates
         if qbit2 < qbit1:
-            self.swap (b-1)
+            self.swap_adj (b-1)
 
         self.gate_2qbit_adj (U, b-1)
 
         # Then unswap everything
         if qbit2 < qbit1:
-            self.swap (b-1)
+            self.swap_adj (b-1)
 
         for i in range (b-2, a-1, -1):
-            self.swap(i)
+            self.swap_adj (i)
 
 
     def cx (self, control, target):
         self.gate_2qbit (QuantumComputer.CNOT, target, control)
 
+
 if __name__ == '__main__':
     qc = QuantumComputer (5, 3)
-
-    qc.h(2)
-    qc.cx(2,3)
-
-    print(qc)
