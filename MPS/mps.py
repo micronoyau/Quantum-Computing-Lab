@@ -19,6 +19,7 @@ def dec2bin (n, size):
 class QuantumComputer :
 
     # Set of usual gates
+    I = np.array([[1,0],[0,1]])
     X = np.array([[0,1],[1,0]])
     Y = np.array([[0,-1j],[1j,0]])
     Z = np.array([[1,0],[0,-1]])
@@ -26,6 +27,7 @@ class QuantumComputer :
     S = np.array([[1,0],[0,1j]])
     T = np.array([[1,0],[0,np.exp(1j*np.pi/4)]])
     CNOT = np.array([[1,0,0,0],[0,1,0,0],[0,0,0,1],[0,0,1,0]])
+    CZ = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,-1]])
     SWAP = np.array([[1,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]])
 
 
@@ -40,14 +42,14 @@ class QuantumComputer :
         self.mps = list() # List of tensors
 
         # First tensor of rank 2 (first qbit, virtual, not used)
-        self.mps.append ( np.zeros((2, khi)) )
+        self.mps.append ( np.zeros((2, khi), dtype=complex) )
 
         # Tensors of rank 3 (qbits in the middle, used)
         for i in range ( N ):
-            self.mps.append ( np.zeros((2, khi, khi)) )
+            self.mps.append ( np.zeros((2, khi, khi), dtype=complex) )
 
         # Last tensor of rank 2 (last qbit, virtual, not used)
-        self.mps.append ( np.zeros((2, khi)) )
+        self.mps.append ( np.zeros((2, khi), dtype=complex) )
 
         # One possible MPS state for representing |0>
         self.mps[0][0][0] = 1
@@ -77,7 +79,7 @@ class QuantumComputer :
         T = np.einsum('ikl,jlm', self.mps[qbit+2], self.mps[qbit+1])
 
         # Step 2
-        U_tilde = np.zeros((2,2,2,2))
+        U_tilde = np.zeros((2,2,2,2), dtype=complex)
         for a in range (2):
             for b in range (2):
                 for c in range (2):
@@ -89,7 +91,7 @@ class QuantumComputer :
 
         # Reshape Tp intro matrix of size 2*khi by 2*khi,
         # following special conventions in paper
-        Tp_tilde = np.zeros((2*self.khi, 2*self.khi))
+        Tp_tilde = np.zeros((2*self.khi, 2*self.khi), dtype=complex)
         for i in range (2):
             for j in range (2):
                 for k in range (self.khi):
@@ -103,13 +105,13 @@ class QuantumComputer :
         S = S[:self.khi]
 
         # Back to tensors
-        X = np.zeros((2, self.khi, 2*self.khi))
+        X = np.zeros((2, self.khi, 2*self.khi), dtype=complex)
         for i in range (2):
             for k in range (self.khi):
                 for l in range (2*self.khi):
                     X[i][k][l] = X_tilde[i*self.khi + k][l]
 
-        Y = np.zeros((2, 2*self.khi, self.khi))
+        Y = np.zeros((2, 2*self.khi, self.khi), dtype=complex)
         for i in range (2):
             for k in range (2*self.khi):
                 for l in range (self.khi):
@@ -146,7 +148,7 @@ class QuantumComputer :
         tens = np.einsum (tens, list(range(1, self.N+3)), self.mps[-1], [0, self.N+2])
 
         # Adding up values to the ket
-        ket = np.array( [0.0] * (2**self.N) )
+        ket = np.array( [0.0] * (2**self.N), dtype=complex )
 
         for i in range( 2**self.N ):
             # Neat hack to write down ket[i] = tens[i_{N-1}]...[i_1][i_0]
@@ -233,6 +235,16 @@ class QuantumComputer :
     def cx (self, control, target):
         self.gate_2qbit (QuantumComputer.CNOT, target, control)
 
+    def cz (self, control, target):
+        self.gate_2qbit (QuantumComputer.CZ, target, control)
 
-if __name__ == '__main__':
-    qc = QuantumComputer (5, 3)
+    def rot (self, alpha, phi, theta, qbit):
+        """
+        Apply a rotation of angle [theta] around unit vector n(alpha, phi) in spherical coordinates
+        """
+        U = np.cos(theta/2) * QuantumComputer.I - 1j * np.sin(theta/2) \
+            * ( np.sin(alpha) * np.cos(phi) * QuantumComputer.X \
+            + np.sin(alpha) * np.sin(phi) * QuantumComputer.Y \
+            + np.cos(alpha) * QuantumComputer.Z )
+
+        self.gate_1qbit (U, qbit)
