@@ -193,6 +193,29 @@ def plot_from_file (filename):
         plt.plot(f_av)
         plt.show()
 
+def plot_gate_fidelity (filename):
+    """
+    Plot fidelity per 2qbit gate
+    """
+
+    with open (filename, 'r') as csvfile:
+        reader = csv.reader (csvfile, delimiter = ' ')
+        N, D, _ = next(reader)
+        N = int(N[4:])
+        D = int(D[4:])
+        next(reader)
+        f = list(map(float,next(reader)))
+
+    print(N)
+    print(D)
+    for d in range (5):
+        for gate in range (N-1):
+            if f[d*(N-1) + gate] != 1:
+                print(d, gate, f[d*(N-1) + gate])
+                pass
+    plt.plot (f)
+    plt.show ()
+
 
 def benchmark_save (N, D, khi, filename):
     f = benchmark_fidelity (N, D, khi)
@@ -215,5 +238,6 @@ def benchmark_save (N, D, khi, filename):
 
 np.set_printoptions(precision=5, suppress=True)
 
-benchmark_save (40, 200, 64, 'CZ.csv')
+#benchmark_save (40, 200, 64, 'CZ.csv')
 plot_from_file ('CZ.csv')
+#plot_gate_fidelity ("CZ.csv")

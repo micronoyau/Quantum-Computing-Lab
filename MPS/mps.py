@@ -26,10 +26,13 @@ class QuantumComputer :
     H = 1 / np.sqrt(2) * np.array([[1,1],[1,-1]])
     S = np.array([[1,0],[0,1j]])
     T = np.array([[1,0],[0,np.exp(1j*np.pi/4)]])
-    CNOT = np.array([[1,0,0,0],[0,1,0,0],[0,0,0,1],[0,0,1,0]])
-    CZ = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,-1]])
     SWAP = np.array([[1,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]])
 
+    ##########################################################################################
+    ##########################################################################################
+    ############################     General operations            ###########################
+    ##########################################################################################
+    ##########################################################################################
 
     def __init__ (self, N, khi):
         """
@@ -166,24 +169,6 @@ class QuantumComputer :
         return str (self.get_ket())
 
 
-    def x (self, qbit):
-        self.gate_1qbit (QuantumComputer.X, qbit)
-
-    def y (self, qbit):
-        self.gate_1qbit (QuantumComputer.Y, qbit)
-
-    def z (self, qbit):
-        self.gate_1qbit (QuantumComputer.Z, qbit)
-
-    def h (self, qbit):
-        self.gate_1qbit (QuantumComputer.H, qbit)
-
-    def s (self, qbit):
-        self.gate_1qbit (QuantumComputer.S, qbit)
-
-    def t (self, qbit):
-        self.gate_1qbit (QuantumComputer.T, qbit)
-
     def swap_adj (self, qbit):
         """
         SWAP two adjacent qbits [qbit] and [qbit]+1
@@ -232,19 +217,105 @@ class QuantumComputer :
             self.swap_adj (i)
 
 
-    def cx (self, control, target):
-        self.gate_2qbit (QuantumComputer.CNOT, target, control)
 
-    def cz (self, control, target):
-        self.gate_2qbit (QuantumComputer.CZ, target, control)
-
-    def rot (self, alpha, phi, theta, qbit):
+    def controlled_gate (self, U, control, target):
         """
-        Apply a rotation of angle [theta] around unit vector n(alpha, phi) in spherical coordinates
+        Build controlled U : apply U on [target] qbit if and only if [control] is |1>
+        """
+        gate = np.eye (4, dtype=complex)
+        gate[2][2] = U[0][0]
+        gate[2][3] = U[0][1]
+        gate[3][2] = U[1][0]
+        gate[3][3] = U[1][1]
+
+        self.gate_2qbit (gate, target, control)
+
+
+    ##########################################################################################
+    ##########################################################################################
+    ###############################     Usual 1 qbit gates        ############################
+    ##########################################################################################
+    ##########################################################################################
+
+    def x (self, qbit):
+        self.gate_1qbit (QuantumComputer.X, qbit)
+
+    def y (self, qbit):
+        self.gate_1qbit (QuantumComputer.Y, qbit)
+
+    def z (self, qbit):
+        self.gate_1qbit (QuantumComputer.Z, qbit)
+
+    def h (self, qbit):
+        self.gate_1qbit (QuantumComputer.H, qbit)
+
+    def s (self, qbit):
+        self.gate_1qbit (QuantumComputer.S, qbit)
+
+    def t (self, qbit):
+        self.gate_1qbit (QuantumComputer.T, qbit)
+
+
+    @staticmethod
+    def rot_unitary (alpha, phi, theta):
+        """
+        Returns the unitary for the rotation of anglaie [theta]
+        around unit vector n([alpha], [phi]) in spherical coordinates
         """
         U = np.cos(theta/2) * QuantumComputer.I - 1j * np.sin(theta/2) \
             * ( np.sin(alpha) * np.cos(phi) * QuantumComputer.X \
             + np.sin(alpha) * np.sin(phi) * QuantumComputer.Y \
             + np.cos(alpha) * QuantumComputer.Z )
+        return U
 
+    def rot (self, alpha, phi, theta, qbit):
+        """
+        Apply a rotation of angle [theta] around unit vector n(alpha, phi) in spherical coordinates
+        """
+        U = QuantumComputer.rot_unitary (alpha, phi, theta)
         self.gate_1qbit (U, qbit)
+
+    def rz (self, theta, qbit):
+        self.rot (0, 0, theta, qbit)
+
+
+    ##########################################################################################
+    ##########################################################################################
+    ###############################     Usual 2 qbit gates        ############################
+    ##########################################################################################
+    ##########################################################################################
+
+
+    def cx (self, control, target):
+        self.controlled_gate (QuantumComputer.X, control, target)
+
+    def cz (self, control, target):
+        self.controlled_gate (QuantumComputer.Z, control, target)
+
+    def crot (self, alpha, phi, theta, control, target):
+        """
+        Apply a controlled rotation of angle [theta] around unit vector n(alpha, phi) in spherical coordinates
+        """
+        U = QuantumComputer.rot_unitary (alpha, phi, theta)
+        self.controlled_gate (U, control, target)
+
+    def cphi (self, phi, control, target):
+        """
+        Apply a controlled phase shift of angle [phi]
+        """
+        U = QuantumComputer.rot_unitary (0, 0, phi)
+        U = np.exp (1j * phi / 2) * U
+        self.controlled_gate (U, control, target)
+
+    def toffoli (self, control1, control2, target):
+        """
+        Apply a double controlled NOT gate (Toffoli gate)
+        """
+        SQRT_X = np.exp(1j * np.pi / 4) * QuantumComputer.rot_unitary (np.pi/2, 0, np.pi / 2)
+        SQRT_X_DG = np.exp(- 1j * np.pi / 4) * QuantumComputer.rot_unitary (np.pi/2, 0, - np.pi / 2)
+
+        self.controlled_gate (SQRT_X, control1, target)
+        self.cx (control2, control1)
+        self.controlled_gate (SQRT_X_DG, control1, target)
+        self.cx (control2, control1)
+        self.controlled_gate (SQRT_X, control2, target)
