@@ -30,7 +30,7 @@ class QuantumComputer :
 
     ##########################################################################################
     ##########################################################################################
-    ############################     General operations            ###########################
+    ############################       General MPS operations        #########################
     ##########################################################################################
     ##########################################################################################
 
@@ -59,6 +59,13 @@ class QuantumComputer :
         for tensor in self.mps[1:-1]:
             tensor[0][0][0] = 1
         self.mps[-1][0][0] = 1
+
+
+    def null_state (self):
+        """
+        Go back to initial state
+        """
+        self.__init__ (self.N, self.khi)
 
 
     def gate_1qbit (self, U, qbit):
@@ -135,39 +142,11 @@ class QuantumComputer :
         self.mps[qbit+1] = Y
 
 
-    def get_ket (self):
-        """
-        Computes the ket representation of the circuit using the following steps:
-        1) Computes tensor contraction of the MPS
-        2) Adds up amplitudes according to tensor values
-        """
-        # Tensor contraction of the MPS : starting from the right
-        tens = self.mps[0]
-
-        for i in range(1, self.N+1):
-            tens = np.einsum (tens, list(range(1, i+2)), self.mps[i], [0, i+2, i+1])
-
-        # Last site to the left
-        tens = np.einsum (tens, list(range(1, self.N+3)), self.mps[-1], [0, self.N+2])
-
-        # Adding up values to the ket
-        ket = np.array( [0.0] * (2**self.N), dtype=complex )
-
-        for i in range( 2**self.N ):
-            # Neat hack to write down ket[i] = tens[i_{N-1}]...[i_1][i_0]
-            i_bin = dec2bin( i, self.N )
-            sub = tens[0]
-            for j in i_bin:
-                sub = sub[j]
-            sub = sub[0]
-            ket[i] = sub
-
-        return ket 
-
-
-    def __str__ (self):
-        return str (self.get_ket())
-
+    ##########################################################################################
+    ##########################################################################################
+    ###################       Arbitrary gates for non-neighbour qbits       ##################
+    ##########################################################################################
+    ##########################################################################################
 
     def swap_adj (self, qbit):
         """
@@ -319,3 +298,83 @@ class QuantumComputer :
         self.controlled_gate (SQRT_X_DG, control1, target)
         self.cx (control2, control1)
         self.controlled_gate (SQRT_X, control2, target)
+
+
+    def cswap (self, control, target1, target2):
+        self.toffoli (control, target1, target2)
+        self.toffoli (control, target2, target1)
+        self.toffoli (control, target1, target2)
+
+
+    ##########################################################################################
+    ##########################################################################################
+    ##############################        Ket representation          ########################
+    ##########################################################################################
+    ##########################################################################################
+
+    def get_ket (self):
+        """
+        Computes the ket representation of the circuit using the following steps:
+        1) Computes tensor contraction of the MPS
+        2) Adds up amplitudes according to tensor values
+        """
+        # Tensor contraction of the MPS : starting from the right
+        tens = self.mps[0]
+
+        for i in range(1, self.N+1):
+            tens = np.einsum (tens, list(range(1, i+2)), self.mps[i], [0, i+2, i+1])
+
+        # Last site to the left
+        tens = np.einsum (tens, list(range(1, self.N+3)), self.mps[-1], [0, self.N+2])
+
+        # Adding up values to the ket
+        ket = np.array( [0.0] * (2**self.N), dtype=complex )
+
+        for i in range( 2**self.N ):
+            # Neat hack to write down ket[i] = tens[i_{N-1}]...[i_1][i_0]
+            i_bin = dec2bin( i, self.N )
+            sub = tens[0]
+            for j in i_bin:
+                sub = sub[j]
+            sub = sub[0]
+            ket[i] = sub
+
+        return ket 
+
+
+    def __str__ (self):
+        return str (self.get_ket())
+
+
+    ##########################################################################################
+    ##########################################################################################
+    #################################         Measurement         ############################
+    ##########################################################################################
+    ##########################################################################################
+
+    def measure_all (self):
+        """
+        Measure all qbits, and leave the state in the collapsed state
+        """
+        ket = self.get_ket()
+        # Theoritical distribution
+        distribution = list(map(lambda x : abs(x)**2, ket))
+        cumul_distrib = [distribution[0]]
+        for k in range (1, len(distribution)):
+            cumul_distrib.append( cumul_distrib[-1] + distribution[k] )
+
+        # Sometimes not equal to 1 because of SVD approximation
+        total = cumul_distrib[-1]
+        rand = np.random.random () * total
+
+        for j in range (len(cumul_distrib)):
+            if rand <= cumul_distrib[j]:
+                self.null_state ()
+
+                qbits = dec2bin (j, self.N)[::-1]
+
+                for qbit in range (len(qbits)):
+                    if qbits[qbit] == 1:
+                        self.x (qbit)
+
+                return j

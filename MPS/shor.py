@@ -1,33 +1,78 @@
-"""
-Implementation of Shor's factoring algorithm
-with MPS representation
-"""
 from mps import QuantumComputer
 import numpy as np
 from abc import ABC, abstractmethod
-
-np.set_printoptions (precision=3, suppress=True)
+from matplotlib import pyplot as plt
 
 def gcd (a, b):
-    assert a >= b
+    if a < b:
+        a, b = b, a
     while b != 0:
         a, b = b, a%b
     return a
 
+def bin2dec (binary):
+    # We assume the representation is a string, with MSB at the left
+    ret = 0
+    for i in range(len(binary)):
+        ret += (int(binary[i]) << (len(binary)-i-1))
+    return ret
+
+def dec2bin (dec, size):
+    if dec == 0:
+        return '0' * size
+
+    ret = []
+    while dec != 0:
+        ret.append (dec%2)
+        dec >>= 1
+
+    ret = list(map(str, ret[::-1]))
+    ret = '0' * (size - len(ret)) + ''.join(ret)
+    return ret
+
+def continuous_fraction_coefs (a, b):
+    """
+    Continuous fraction coefficients of a/b
+    """
+    ret = []
+    while a != 0:
+        ret.append( int(b//a) )
+        a, b = b%a, a
+    return ret
+
+def partial_sum (coefs):
+    """
+    [coefs] has shape [a0, ..., an], and we compute 1/(a0 + 1/(a1 + ...) ) as p/q, with gcd(p,q) = 1
+    """
+    if len (coefs) == 1:
+        return (1, coefs[0])
+
+    p,q = partial_sum (coefs[1:])
+    den = coefs[0] * q + p
+    num = q
+    g = gcd(p, q)
+    return (num//g, den//g)
+
+
 class ShorComputer (QuantumComputer, ABC):
 
-    def __init__ (self, khi, n):
-        self.n = n # Composite number to factor
-        self.d = int(np.log(n) / np.log(2)) + 1 # Size of first register
-        self.t = 2 * int (np.log(n)/np.log(2) + 1) + 1 # Precision (size of second register)
-        QuantumComputer.__init__ (self, self.t + self.d, khi)
+    def __init__ (self, n, khi):
+        self.n = n
+        self.d = int (np.log(n) / np.log(2)) + 1 # Size of first register (eigenvector)
+        self.t = 2 * int (np.log(n) / np.log(2) + 1) + 1 # Size of second register (precision)
+        self.N = self.d + self.t
+        self.khi = khi
+        QuantumComputer.__init__ (self, self.N, self.khi)
 
+    def null_state (self):
+        pass
 
     def v (self, i, j):
+        # Controlled phase gate
         self.cphi (np.pi / (2**abs(i-j)), i, j)
 
     def v_dg (self, i, j):
-        self.cphi (- np.pi / (2**abs(i-j)), i, j)
+        self.cphi (-np.pi / (2**abs(i-j)), i, j)
 
     def QFT (self, q0, q1):
         """
@@ -35,7 +80,7 @@ class ShorComputer (QuantumComputer, ABC):
         """
         assert q0 < q1
 
-        # First swap qbits : |x_{n-1} ... x_0 > ----> |x_0 ... x_{n-1} >
+        # First swap qbits : | x_{n-1} ... x_0 >  ----->  | x_0 ... x_{n-1} >
         for i in range ((q1 - q0 + 1)//2):
             self.swap (q0+i, q1-i)
 
@@ -54,26 +99,20 @@ class ShorComputer (QuantumComputer, ABC):
         # Apply V_{i,j}^\dagger
         for i in range (q1, q0-1, -1):
             for j in range (q1, i, -1):
-                self.v_dg (i,j)
+                self.v_dg (i, j)
             self.h (i)
 
-        # Swap qbits : |x_{n-1} ... x_0 > ----> |x_0 ... x_{n-1} >
+        # Swap qbits : | x_{n-1} ... x_0 >  ----->  | x_0 ... x_{n-1} >
         for i in range ((q1 - q0 + 1)//2):
             self.swap (q0+i, q1-i)
 
 
-    def cswap (self, control, target1, target2):
-        self.toffoli (control, target1, target2)
-        self.toffoli (control, target2, target1)
-        self.toffoli (control, target1, target2)
-
-
     def prepare_eigenstate (self):
-        # Last qbit : initializing second register to |1>
-        self.x (self.t + self.d - 1)
+        # Last qbit : initializing first register to |1> (superposition of eigenvectors)
+        self.x (0)
 
     @abstractmethod
-    def CU (self, a, k, control):
+    def cu2k (self, a, k, control):
         """
         [a] is the element in (Z/nZ)* which we want to find the order
         For this reason, we must have gcd (a,n) = 1
@@ -90,7 +129,7 @@ class ShorComputer (QuantumComputer, ABC):
 
         [CU] is an instance method, that represents the controlled unitary U, which takes the following parameters :
          - [a] : element in (Z/nZ)* which we want to find the order
-         - [k] : we apply U 2^k times to qbits [self.t] to [self.t]+[self.n]-1
+         - [k] : we apply U 2^k times to qbits 0 to [self.d]-1
          - [control] : control qbit
 
         def U (self, a, k, control):
@@ -99,17 +138,17 @@ class ShorComputer (QuantumComputer, ABC):
         """
         # First apply Hadamards
         for i in range (self.t):
-            self.h (i)
+            self.h (i + self.d)
 
         # Implement |u> in second register
         self.prepare_eigenstate ()
 
         # Then apply U^{2^k} gates
         for k in range (self.t):
-            self.CU (a, k, k)
+            self.cu2k (a, k, self.d+k)
 
         # Finally apply inverse QFT to gather eigenvalue
-        self.QFT_dg (0, self.t-1)
+        self.QFT_dg (self.d, self.N-1)
 
 
     def run (self):
@@ -119,14 +158,47 @@ class ShorComputer (QuantumComputer, ABC):
         """
         # Step 1 : select a random a in [2, n-1]
         a = np.random.randint (2, self.n)
+        a = 13
         print ("Trying with a = {}".format(a))
 
         # Step 2 : is a coprime with n ?
-        if gcd (self.n, a) != 1:
-            print ("Found prime factor ! (very lucky way) : p = {}".format(a))
+        g = gcd (self.n, a)
+        if g != 1:
+            print ("Found prime factor ! (very lucky way) : p = {}".format(g))
+            return (g, self.n//g)
 
         # Step 3 : compute order [r] of [a] modulo [n] with QPE
         self.QPE (a)
+
+        # Measure
+        meas = self.measure_all ()
+        frac = meas >> self.d
+        print ("Obtained eigenvalue phi={}".format( dec2bin(meas >> self.d, self.t) ))
+
+        coefs = continuous_fraction_coefs (frac, 2**self.t)
+
+        for i in range(len(coefs)):
+            _, possible_r = partial_sum(coefs[:i+1])
+
+            if possible_r != 0 and possible_r < self.n and pow(a, possible_r, self.n) == 1:
+                print ("Found the order of {} mod {} : it's r={}".format(a, self.n, possible_r))
+
+                if possible_r % 2 == 1:
+                    print ("But it's not even :/")
+                    return None
+
+                elif pow(a, possible_r//2, self.n) == self.n-1:
+                    print ("But a^{r/2} is a square root of identity :/")
+                    return None
+
+                # Step 4
+                p = gcd(pow(a, possible_r//2, self.n) + 1, self.n)
+                q = self.n // p
+                print ("Bouyah ! Factored p={} and q={}".format(p, q))
+                return (p,q)
+
+        print ("Sorry, we didn't find the order :/")
+
 
 
 class Shor15 (ShorComputer):
@@ -134,69 +206,75 @@ class Shor15 (ShorComputer):
     Factor 15 with Shor's algorithm
     """
     def __init__ (self, khi):
-        ShorComputer.__init__ (self, khi, 15)
+        ShorComputer.__init__ (self, 15, khi)
 
+    def null_state (self):
+        self.__init__ (self.khi)
 
-    def CU (self, a, k, control):
+    def cu2k (self, a, k, control):
         """
         Hard coded CU^2^k for [a] and [k], for n = 15
         """
         # Only elements which have gcd (a,n) = 1
         if a == 2:
             if k == 0:
-                self.cswap (self.t+3, self.t+2, control)
-                self.cswap (self.t+2, self.t+1, control)
-                self.cswap (self.t+1, self.t, control)
+                self.cswap (control, 3, 2)
+                self.cswap (control, 2, 1)
+                self.cswap (control, 1, 0)
 
             elif k == 1:
-                self.cswap (self.t+2, self.t, control)
-                self.cswap (self.t+3, self.t+1, control)
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
 
         elif a == 4:
             if k == 0:
-                self.cswap (self.t+2, self.t, control)
-                self.cswap (self.t+3, self.t+1, control)
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
 
         elif a == 7:
             if k == 0:
-                self.cswap (self.t+1, self.t, control)
-                self.cswap (self.t+2, self.t+1, control)
-                self.cswap (self.t+3, self.t+2, control)
-                for i in range (self.t, self.t+4):
+                self.cswap (control, 1, 0)
+                self.cswap (control, 2, 1)
+                self.cswap (control, 3, 2)
+                for i in range (4):
                     self.cx (control, i)
 
             if k == 1:
-                self.cswap (self.t+2, self.t, control)
-                self.cswap (self.t+3, self.t+1, control)
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
 
         elif a == 8:
             if k == 0:
-                self.cswap (self.t+1, self.t, control)
-                self.cswap (self.t+2, self.t+1, control)
-                self.cswap (self.t+3, self.t+2, control)
+                self.cswap (control, 1, 0)
+                self.cswap (control, 2, 1)
+                self.cswap (control, 3, 2)
+
+            elif k == 1:
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
 
         elif a == 11:
             if k == 0:
-                self.cswap (self.t+2, self.t, control)
-                self.cswap (self.t+3, self.t+1, control)
-                for i in range (self.t, self.t+4):
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
+                for i in range (4):
                     self.cx (control, i)
 
         elif a == 13:
             if k == 0:
-                self.cswap (self.t+3, self.t+2, control)
-                self.cswap (self.t+2, self.t+1, control)
-                self.cswap (self.t+1, self.t, control)
-                for i in range (self.t, self.t+4):
+                self.cswap (control, 3, 2)
+                self.cswap (control, 2, 1)
+                self.cswap (control, 1, 0)
+                for i in range (4):
                     self.cx (control, i)
 
             if k == 1:
-                self.cswap (self.t+2, self.t, control)
-                self.cswap (self.t+3, self.t+1, control)
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
 
         elif a == 14:
             if k == 0:
-                for i in range (self.t, self.t+4):
+                for i in range (4):
                     self.cx (control, i)
 
 
