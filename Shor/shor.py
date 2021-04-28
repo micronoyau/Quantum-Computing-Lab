@@ -1,216 +1,287 @@
-from qiskit import QuantumCircuit, Aer, execute
-from qiskit.visualization import plot_histogram, plot_bloch_multivector, plot_bloch_vector
-from matplotlib import pyplot as plt
-from numpy import pi
+from qiskit import QuantumCircuit, assemble, Aer
 import numpy as np
+from abc import ABC, abstractmethod
+from matplotlib import pyplot as plt
 
-# Pretty print style for numpy
-np.set_printoptions(precision=3, suppress=True, linewidth=210)
+def gcd (a, b):
+    if a < b:
+        a, b = b, a
+    while b != 0:
+        a, b = b, a%b
+    return a
 
-#########################################################################################
-###############################           QFT          ##################################
-#########################################################################################
-
-def V (k):
-    U = QuantumCircuit(2)
-    U.cp( pi / (2**k), 0, 1)
-    gate = U.to_gate()
-    gate.label = "V{}".format(k)
-    return gate
-
-def swap (qc, begin_qbit, end_qbit):
-    for i in range((end_qbit-begin_qbit-1)//2 + 1):
-        qc.swap(begin_qbit+i, end_qbit-i)
-
-def QFT (begin_qbit, end_qbit):
-    U = QuantumCircuit(end_qbit-begin_qbit+1)
-    for i in range(end_qbit, begin_qbit-1, -1):
-        U.h(i)
-        for j in range(i):
-            U.append(V(i-j), [i,j])
-    swap(U, begin_qbit, end_qbit)
-    gate = U.to_gate()
-    gate.label = "QFT"
-    #U.draw(output='mpl')
-    #plt.show()
-    return gate
-
-
-#########################################################################################
-##############################           Uf           ###################################
-#########################################################################################
-
-
-def controlled_mult7 (qc, begin_output, control):
-    """
-    Hard coded controlled multiplication by 7 mod 15
-    """
-    qc.cswap(control, begin_output, begin_output+3)
-    qc.cswap(control, begin_output, begin_output+1)
-    qc.cswap(control, begin_output+1, begin_output+2)
-    for i in range(begin_output, begin_output+4):
-        qc.cx(control, i)
-
-
-def controlled_mult4 (qc, begin_output, control):
-    """
-    Hard coded controlled multiplication by 4 mod 15
-    """
-    qc.cswap(control, begin_output, begin_output+2)
-    qc.cswap(control, begin_output+1, begin_output+3)
-
-def Uf (begin_input, begin_output):
-    """
-    Controlled b^x mod N gate, hard coded for b = 7, N = 15, with n0 = 4 (and n=8)
-    x is the input
-    """
-    U = QuantumCircuit(12)
-    U.x(begin_output)
-    work = 7
-    for i in range(8):
-        if work == 7:
-            controlled_mult7(U, begin_output, begin_input+i)
-        elif work == 4:
-            controlled_mult4(U, begin_output, begin_input+i)
-        work = (work * work) % 15
-    gate = U.to_gate()
-    gate.label = 'Uf'
-    return gate
-
-
-#########################################################################################
-############################           Shor           ###################################
-#########################################################################################
-
-def bin_to_dec (m):
+def bin2dec (binary):
+    # We assume the representation is a string, with MSB at the left
     ret = 0
-    k = 1
-    while m != '':
-        ret += k * (int(m[-1])%2)
-        m = m[:-1]
-        k <<= 1
+    for i in range(len(binary)):
+        ret += (int(binary[i]) << (len(binary)-i-1))
     return ret
 
-def continuous_fraction_coefs (b, a):
+def continuous_fraction_coefs (a, b):
     """
     Continuous fraction coefficients of a/b
     """
     ret = []
-    while a%b != 0:
-        ret.append(int(a//b))
-        a, b = b, a%b
-    ret.append(int(a//b))
+    while a != 0:
+        ret.append( int(b//a) )
+        a, b = b%a, a
     return ret
-
-
-def gcd (a, b):
-    while a%b != 0:
-        a, b = b, a%b
-    return b
-
 
 def partial_sum (coefs):
     """
-    [coefs] is of the form [a0, ..., an], and we compute 1/( a0 + 1/(a1 + ...) ) as p/q, gcd(p,q)=1
+    [coefs] has shape [a0, ..., an], and we compute 1/(a0 + 1/(a1 + ...) ) as p/q, with gcd(p,q) = 1
     """
-    if len(coefs) == 1:
-        return (1,coefs[0])
-    p,q = partial_sum(coefs[1:])
-    den = coefs[0]*q + p
+    if len (coefs) == 1:
+        return (1, coefs[0])
+
+    p,q = partial_sum (coefs[1:])
+    den = coefs[0] * q + p
     num = q
-    d = gcd(num,den)
-    return (int(num//d), int(den//d))
+    g = gcd(p, q)
+    return (num//g, den//g)
 
 
-def shor ():
-    # Problem constants
-    p = 3
-    q = 5
-    N = p*q
-    n0 = 4
-    n = 2*n0
+class ShorComputer (QuantumCircuit, ABC):
 
-    ###############################################################
-    ####################    Quantum part  #########################
-    ###############################################################
+    def __init__ (self, n):
+        self.n = n
+        self.d = int (np.log(n) / np.log(2)) + 1 # Size of first register (eigenvector)
+        self.t = 2 * int (np.log(n) / np.log(2) + 1) + 1 # Size of second register (precision)
+        self.N = self.d + self.t
+        QuantumCircuit.__init__ (self, self.N)
 
-    qc = QuantumCircuit(n+n0, n+n0)
+    def null_state (self):
+        pass
 
-    ### Applying Hadamards ###
-    for i in range(n):
-        qc.h(i)
+    def v (self, i, j):
+        # Controlled phase gate
+        self.cp (np.pi / (2**abs(i-j)), i, j)
 
-    ### Applying Uf ###
-    qc.append(Uf(0,n), range(n+n0))
+    def v_dg (self, i, j):
+        self.cp (-np.pi / (2**abs(i-j)), i, j)
 
-    ### Measuring output register ###
-    for j in range(n, n+n0):
-        qc.measure(j,j)
+    def QFT (self, q0, q1):
+        """
+        Apply QFT to qbits between [q0] and [q1], with q0 < q1
+        """
+        assert q0 < q1
 
-    ### Applying QFT on input register ###
-    qc.append(QFT(0,n-1), range(n))
+        # First swap qbits : | x_{n-1} ... x_0 >  ----->  | x_0 ... x_{n-1} >
+        for i in range ((q1 - q0 + 1)//2):
+            self.swap (q0+i, q1-i)
 
-    ### Measuring input register ###
-    for i in range(n):
-        qc.measure(i, i)
+        # Apply V_{i,j}
+        for i in range (q0, q1+1):
+            self.h (i)
+            for j in range (i+1, q1+1):
+                self.v (i,j)
 
-    shots = 1024
-    counts = execute(qc, Aer.get_backend("qasm_simulator"), shots=shots).result().get_counts()
+    def QFT_dg (self, q0, q1):
+        """
+        Apply inverse QFT to qbits between [q0] and [q1], with q0 < q1
+        """
+        assert q0 < q1
 
-    ###############################################################
-    ####################    Classic part  #########################
-    ###############################################################
+        # Apply V_{i,j}^\dagger
+        for i in range (q1, q0-1, -1):
+            for j in range (q1, i, -1):
+                self.v_dg (i, j)
+            self.h (i)
 
-    # We check how many times a 4 appears in partial sums (which is the order of 7 mod 15)
-    good_results = 0
-
-    for y_bin in counts:
-
-        y = bin_to_dec(y_bin[4:])
-        d = gcd(y, 2**n)
-        approx = (int(y//d), int((2**n)//d)) # y / 2^n
-
-        if approx[0] != 0:
-
-            # computing continuous fraction coefficients
-            coefs = continuous_fraction_coefs (approx[0], approx[1])
-
-            # computing continuous fraction partial sums
-            for i in range(len(coefs)):
-                possible_r = partial_sum(coefs[:i+1])[1]
-                if possible_r == 4:
-                    good_results += counts[y_bin]
-                    break
-
-    print("Average good results : ", good_results/shots)
-    qc.draw(output='mpl')
-    plt.show()
+        # Swap qbits : | x_{n-1} ... x_0 >  ----->  | x_0 ... x_{n-1} >
+        for i in range ((q1 - q0 + 1)//2):
+            self.swap (q0+i, q1-i)
 
 
-#########################################################################################
-############################           Tests           ##################################
-#########################################################################################
+    def prepare_eigenstate (self):
+        # Last qbit : initializing first register to |1> (superposition of eigenvectors)
+        self.x (0)
 
-def computational_basis_QFT (qc, x, n):
-    ### Preparing state ###
-    for j in range(n):
-        if (x & 1 == 1):
-            qc.x(j)
-        x >>= 1
-
-    statevector = execute(qc, Aer.get_backend('statevector_simulator')).result().get_statevector()
-    plot_bloch_multivector(statevector)
-
-    ### Applying QFT ###
-    qc.append(QFT(0,n-1), range(n))
-
-    ### Results ###
-    statevector = execute(qc, Aer.get_backend('statevector_simulator')).result().get_statevector()
-    plot_bloch_multivector(statevector)
-    plt.show()
+    @abstractmethod
+    def cu2k (self, a, k, control):
+        """
+        [a] is the element in (Z/nZ)* which we want to find the order
+        For this reason, we must have gcd (a,n) = 1
+        [k] is the exponent in the execution of U^{2^k}
+        """
+        pass
 
 
-if __name__ == '__main__':
-    shor ()
-    #qc = QuantumCircuit(4)
-    #computational_basis_QFT(qc, 2, 4)
+    def QPE (self, a):
+        """
+        We assess that the first [t] qbits are |0>, with [t] the precision wanted for the eigenvalue,
+        and that the next [n] qbits contain the eigenstate |u> of [U]
+        We then perform a QPE to estimate the phase of eigenvalue associated with |u>.
+
+        [CU] is an instance method, that represents the controlled unitary U, which takes the following parameters :
+         - [a] : element in (Z/nZ)* which we want to find the order
+         - [k] : we apply U 2^k times to qbits 0 to [self.d]-1
+         - [control] : control qbit
+
+        def U (self, a, k, control):
+            # Execute U^{2^k} controlled by [control]
+            ...
+        """
+        # First apply Hadamards
+        for i in range (self.t):
+            self.h (i + self.d)
+
+        # Implement |u> in second register
+        self.prepare_eigenstate ()
+
+        # Then apply U^{2^k} gates
+        for k in range (self.t):
+            self.cu2k (a, k, self.d+k)
+
+        # Finally apply inverse QFT to gather eigenvalue
+        self.QFT_dg (self.d, self.N-1)
+
+
+    def run (self):
+        """
+        Core of Shor's algorithm.
+        Executes the differents parts together.
+        """
+        # Step 1 : select a random a in [2, n-1]
+        a = np.random.randint (2, self.n)
+        print ("Trying with a = {}".format(a))
+
+        # Step 2 : is a coprime with n ?
+        g = gcd (self.n, a)
+        if g != 1:
+            print ("Found prime factor ! (very lucky way) : p = {}".format(g))
+            return (g, self.n//g)
+
+        # Step 3 : compute order [r] of [a] modulo [n] with QPE
+        self.QPE (a)
+
+        # Measure
+        self.measure_all ()
+        sim = Aer.get_backend ('qasm_simulator')
+        qobj = assemble (self)
+        result = sim.run(qobj, shots=1).result ()
+        counts = result.get_counts ()
+
+        binary_res = list(counts.keys())[0][:self.t]
+        print ("Obtained eigenvalue phi={}".format(binary_res))
+        frac = bin2dec (binary_res)
+        coefs = continuous_fraction_coefs (frac, 2**self.t)
+
+        for i in range(len(coefs)):
+            _, possible_r = partial_sum(coefs[:i+1])
+
+            if possible_r != 0 and pow(a, possible_r, self.n) == 1:
+                print ("Found the order of {} mod {} : it's r={}".format(a, self.n, possible_r))
+
+                if possible_r % 2 == 1:
+                    print ("But it's not even :/")
+                    return None
+
+                elif pow(a, possible_r//2, self.n) == self.n-1:
+                    print ("But a^{r/2} is a square root of identity :/")
+                    return None
+
+                # Step 4
+                p = gcd(pow(a, possible_r//2, self.n) + 1, self.n)
+                q = self.n // p
+                print ("Bouyah ! Factored p={} and q={}".format(p, q))
+                return (p,q)
+
+        print ("Sorry, we didn't find the order :/")
+
+class Shor15 (ShorComputer):
+    """
+    Factor 15 with Shor's algorithm
+    """
+    def __init__ (self):
+        ShorComputer.__init__ (self, 15)
+
+    def null_state (self):
+        self.__init__ ()
+
+    def cu2k (self, a, k, control):
+        """
+        Hard coded CU^2^k for [a] and [k], for n = 15
+        """
+        # Only elements which have gcd (a,n) = 1
+        if a == 2:
+            if k == 0:
+                self.cswap (control, 3, 2)
+                self.cswap (control, 2, 1)
+                self.cswap (control, 1, 0)
+
+            elif k == 1:
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
+
+        elif a == 4:
+            if k == 0:
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
+
+        elif a == 7:
+            if k == 0:
+                self.cswap (control, 1, 0)
+                self.cswap (control, 2, 1)
+                self.cswap (control, 3, 2)
+                for i in range (4):
+                    self.cx (control, i)
+
+            if k == 1:
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
+
+        elif a == 8:
+            if k == 0:
+                self.cswap (control, 1, 0)
+                self.cswap (control, 2, 1)
+                self.cswap (control, 3, 2)
+
+            elif k == 1:
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
+
+        elif a == 11:
+            if k == 0:
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
+                for i in range (4):
+                    self.cx (control, i)
+
+        elif a == 13:
+            if k == 0:
+                self.cswap (control, 3, 2)
+                self.cswap (control, 2, 1)
+                self.cswap (control, 1, 0)
+                for i in range (4):
+                    self.cx (control, i)
+
+            if k == 1:
+                self.cswap (control, 2, 0)
+                self.cswap (control, 3, 1)
+
+        elif a == 14:
+            if k == 0:
+                for i in range (4):
+                    self.cx (control, i)
+
+
+qc = Shor15 ()
+qc.run ()
+
+
+"""
+qc.x (qc.d)
+qc.x (0)
+qc.cu2k (7, 1, qc.d)
+
+qc.draw (output='mpl')
+plt.show()
+
+qc.measure_all ()
+sim = Aer.get_backend ('qasm_simulator')
+qobj = assemble (qc)
+result = sim.run(qobj, shots=1024).result ()
+counts = result.get_counts ()
+print(counts)
+"""
