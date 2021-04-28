@@ -164,6 +164,7 @@ class ShorComputer (QuantumCircuit, ABC):
 
         binary_res = list(counts.keys())[0][:self.t]
         print ("Obtained eigenvalue phi={}".format(binary_res))
+
         frac = bin2dec (binary_res)
         coefs = continuous_fraction_coefs (frac, 2**self.t)
 
@@ -188,6 +189,8 @@ class ShorComputer (QuantumCircuit, ABC):
                 return (p,q)
 
         print ("Sorry, we didn't find the order :/")
+
+
 
 class Shor15 (ShorComputer):
     """
@@ -268,20 +271,3 @@ class Shor15 (ShorComputer):
 
 qc = Shor15 ()
 qc.run ()
-
-
-"""
-qc.x (qc.d)
-qc.x (0)
-qc.cu2k (7, 1, qc.d)
-
-qc.draw (output='mpl')
-plt.show()
-
-qc.measure_all ()
-sim = Aer.get_backend ('qasm_simulator')
-qobj = assemble (qc)
-result = sim.run(qobj, shots=1024).result ()
-counts = result.get_counts ()
-print(counts)
-"""
