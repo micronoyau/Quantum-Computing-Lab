@@ -158,7 +158,6 @@ class ShorComputer (QuantumComputer, ABC):
         """
         # Step 1 : select a random a in [2, n-1]
         a = np.random.randint (2, self.n)
-        a = 13
         print ("Trying with a = {}".format(a))
 
         # Step 2 : is a coprime with n ?
