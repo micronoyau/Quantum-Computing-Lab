@@ -2,6 +2,7 @@ from mps import QuantumComputer
 from matplotlib import pyplot as plt
 import numpy as np
 import csv
+import time
 
 """
 Measurement of the fidelity of MPS quantum circuit
@@ -12,6 +13,8 @@ class BenchmarkQuantumComputer (QuantumComputer):
     Measurement of the fidelity
     Any 2 qbit gate returns its fidelity
     """
+
+    CZ = np.array( [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,-1]] )
 
     def gate_2qbit_adj (self, U, qbit):
         assert qbit >= 0 and qbit < self.N-1, "Provided qbit index is out of bounds !"
@@ -25,7 +28,8 @@ class BenchmarkQuantumComputer (QuantumComputer):
             for b in range (2):
                 for c in range (2):
                     for d in range (2):
-                        U_tilde[a][b][c][d] = U[2*a+b][2*c+d]
+                        U_tilde[a, b, c, d] = U[2*a+b, 2*c+d]
+
         Tp = np.einsum('ijkl,klmn', U_tilde, T)
 
         # Step 3
@@ -37,7 +41,8 @@ class BenchmarkQuantumComputer (QuantumComputer):
             for j in range (2):
                 for k in range (self.khi):
                     for l in range (self.khi):
-                        Tp_tilde[i*self.khi + k][j*self.khi + l] = Tp[i][j][k][l]
+                        Tp_tilde[i*self.khi + k, j*self.khi + l] = Tp[i, j, k, l]
+
 
         # SVD
         X_tilde, S, Y_tilde = np.linalg.svd (Tp_tilde)
@@ -47,21 +52,17 @@ class BenchmarkQuantumComputer (QuantumComputer):
         S = S[:self.khi]
 
         # Back to tensors
-        X = np.zeros((2, self.khi, 2*self.khi), dtype=complex)
+        X = np.zeros((2, self.khi, self.khi), dtype=complex)
         for i in range (2):
             for k in range (self.khi):
-                for l in range (2*self.khi):
-                    X[i][k][l] = X_tilde[i*self.khi + k][l]
-
-        Y = np.zeros((2, 2*self.khi, self.khi), dtype=complex)
-        for i in range (2):
-            for k in range (2*self.khi):
                 for l in range (self.khi):
-                    Y[i][k][l] = Y_tilde[k][i*self.khi + l]
+                    X[i, k, l] = X_tilde[i*self.khi + k, l]
 
-        # Truncate X and Y
-        X = X[:, :, :self.khi]
-        Y = Y[:, :self.khi, :]
+        Y = np.zeros((2, self.khi, self.khi), dtype=complex)
+        for i in range (2):
+            for k in range (self.khi):
+                for l in range (self.khi):
+                    Y[i, k, l] = Y_tilde[k, i*self.khi + l]
 
         # Step 4
 
@@ -69,16 +70,16 @@ class BenchmarkQuantumComputer (QuantumComputer):
         for i in range (2):
             for k in range (self.khi):
                 for l in range (self.khi):
-                    self.mps[qbit+2][i][k][l] = X[i][k][l] * S[l]
+                    self.mps[qbit+2][i, k, l] = X[i, k, l] * S[l]
 
         self.mps[qbit+1] = Y
 
         return f # return fidelity of operation
 
 
+    # Faster computation
     def cz_adj (self, qbit):
-        return self.gate_2qbit_adj (QuantumComputer.CZ, qbit)
-
+        return self.gate_2qbit_adj (BenchmarkQuantumComputer.CZ, qbit)
 
 
 def benchmark_fidelity (N, D, khi):
@@ -188,6 +189,7 @@ def plot_from_file (filename):
         f_seq = list(map(float, next(reader)))
         next(reader)
         f_av = list(map(float, next(reader)))
+        print(f_seq)
 
         plt.plot(f_seq)
         plt.plot(f_av)

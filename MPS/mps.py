@@ -238,7 +238,7 @@ class QuantumComputer :
     @staticmethod
     def rot_unitary (alpha, phi, theta):
         """
-        Returns the unitary for the rotation of anglaie [theta]
+        Returns the unitary for the rotation of angle [theta]
         around unit vector n([alpha], [phi]) in spherical coordinates
         """
         U = np.cos(theta/2) * QuantumComputer.I - 1j * np.sin(theta/2) \
