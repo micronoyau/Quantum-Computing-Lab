@@ -357,14 +357,17 @@ class QuantumComputer :
         Measure all qbits, and leave the state in the collapsed state
         """
         ket = self.get_ket()
-        # Theoritical distribution
+
+        # Individual probabilities
         distribution = list(map(lambda x : abs(x)**2, ket))
+
         cumul_distrib = [distribution[0]]
         for k in range (1, len(distribution)):
             cumul_distrib.append( cumul_distrib[-1] + distribution[k] )
 
         # Sometimes not equal to 1 because of SVD approximation
         total = cumul_distrib[-1]
+        # Random number to represent the outcom
         rand = np.random.random () * total
 
         for j in range (len(cumul_distrib)):
@@ -378,3 +381,38 @@ class QuantumComputer :
                         self.x (qbit)
 
                 return j
+
+
+    def measure (self, qbit):
+        """
+        Measure a single qbit, and leave the state in the collapsed state
+        """
+        ket = self.get_ket ()
+
+        # Computing probability to get a |0>
+        p0 = 0
+        for i in range (pow(2, self.N-1)):
+            lsb = i & (pow(2, qbit)-1)
+            msb = i & (~lsb)
+            msb <<= 1
+            p0 += abs(ket[msb | lsb])**2
+
+        # Sometimes not equal to 1 because of SVD approximation
+        total = sum(map(lambda x:abs(x)**2, ket))
+        rand = np.random.random () * total
+
+        # The outcome is |0>
+        if rand < p0:
+            # We have to set the collapsed state
+            # -> We project the current ket onto the eigenspace with projector (I+Z_qbit)/2
+            # and we normalize it. This is equivalent to applying (I+Z_qbit) / (2*sqrt(p0))
+            U = np.array ([[1.0, 0.0], [0.0, 0.0]])
+            U /= np.sqrt(p0)
+            self.gate_1qbit (U, qbit)
+            return 0
+
+        # The outcome is |1>
+        U = np.array ([[0.0, 0.0], [0.0, 1.0]])
+        U /= np.sqrt(1-p0)
+        self.gate_1qbit (U, qbit)
+        return 1
