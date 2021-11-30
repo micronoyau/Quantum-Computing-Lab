@@ -79,16 +79,90 @@ class QuantumComputer :
         self.mps[qbit+1] = np.einsum('ij,jkl', U, self.mps[qbit+1])
 
 
+    def right_canonical_form (self, qbit):
+        """
+        Puts the MPS in right canonical form up to qbit [qbit] (excluded, so [qbit]-1 included)
+        """
+        # We start from right (A(1)) and stop at qbit-1
+        for l in range (1, qbit):
+            # Reshape tensor into matrix
+            A_tilde = np.asmatrix (np.zeros ((self.khi, 2*self.khi), dtype=complex))
+            for i_l in range (2):
+                for mu_l in range (self.khi):
+                    for mu_l_1 in range (self.khi):
+                        A_tilde[mu_l, i_l*self.khi + mu_l_1] = self.mps[l][i_l][mu_l][mu_l_1]
+
+            # QR decomposition
+            q, r = np.linalg.qr (A_tilde.getH())
+
+            # Dropping useless parts (zeros and multiplied by zeros)
+            r = r[:self.khi,:]
+            q = q[:,:self.khi]
+
+            # Getting dagger operators (need for right canonical form)
+            q = q.getH()
+            r = r.getH()
+
+            # Update MPS
+            for i_l in range (2):
+                for mu_l in range (self.khi):
+                    for mu_l_1 in range (self.khi):
+                        self.mps[l][i_l][mu_l][mu_l_1] = q[mu_l, i_l*self.khi + mu_l_1]
+
+            self.mps[l+1] = np.einsum ('ijk,kl', self.mps[l+1], r)
+
+
+    def left_canonical_form (self, qbit):
+        """
+        Puts the MPS in left canonical form up to qbit [qbit] (excluded, so [qbit]+1 included)
+        """
+        # We start from left (A(N-2)) and stop at qbit-1
+        for l in range (self.N, qbit, -1):
+            # Reshape tensor into matrix
+            A_tilde = np.asmatrix (np.zeros ((2*self.khi, self.khi), dtype=complex))
+            for i_l in range (2):
+                for mu_l in range (self.khi):
+                    for mu_l_1 in range (self.khi):
+                        A_tilde[i_l*self.khi + mu_l, mu_l_1] = self.mps[l][i_l][mu_l][mu_l_1]
+
+            # QR decomposition
+            q, r = np.linalg.qr (A_tilde)
+
+            # Dropping useless parts (zeros and multiplied by zeros)
+            r = r[:self.khi,:]
+            q = q[:,:self.khi]
+
+            # Update MPS
+            for i_l in range (2):
+                for mu_l in range (self.khi):
+                    for mu_l_1 in range (self.khi):
+                        self.mps[l][i_l][mu_l][mu_l_1] = q[i_l*self.khi + mu_l, mu_l_1]
+
+            self.mps[l-1] = np.einsum ('jk,ikl', r, self.mps[l-1])
+
+
+    def canonical_form (self, qbit):
+        """
+        Puts the MPS in canonical form centered on qbits [qbit] and [qbit] + 1
+        through a series of QR decompositions.
+        """
+        self.left_canonical_form (qbit+1)
+        self.right_canonical_form (qbit)
+
+
     def gate_2qbit_adj (self, U, qbit):
         """
         Apply unitary 2 qbit gate on adjacent qbits [qbit] and [qbit]+1
         """
         assert qbit >= 0 and qbit < self.N-1, "Provided qbit index is out of bounds !"
 
-        # Step 1
-        T = np.einsum('ikl,jlm', self.mps[qbit+2], self.mps[qbit+1])
+        # Step 1 : canonical form
+        self.canonical_form (qbit)
 
         # Step 2
+        T = np.einsum('ikl,jlm', self.mps[qbit+2], self.mps[qbit+1])
+
+        # Step 3
         U_tilde = np.zeros((2,2,2,2), dtype=complex)
         for a in range (2):
             for b in range (2):
@@ -97,7 +171,7 @@ class QuantumComputer :
                         U_tilde[a][b][c][d] = U[2*a+b][2*c+d]
         Tp = np.einsum('ijkl,klmn', U_tilde, T)
 
-        # Step 3
+        # Step 4
 
         # Reshape Tp intro matrix of size 2*khi by 2*khi,
         # following special conventions in paper
@@ -131,7 +205,7 @@ class QuantumComputer :
         X = X[:, :, :self.khi]
         Y = Y[:, :self.khi, :]
 
-        # Step 4
+        # Step 5
 
         # Contraction of X and S
         for i in range (2):
