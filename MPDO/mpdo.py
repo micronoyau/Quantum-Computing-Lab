@@ -460,15 +460,6 @@ class MPDO:
             self.mpo = deepcopy(mpo_copy)
 
 
-        """
-        print (final[1][1,0,0,0])
-        print (final[0][0,0,0,0])
-        print (final[1][0,self.kappa,0,0])
-        print (final[0][0,self.kappa,0,0])
-        print (final[1][0,2*self.kappa,0,0])
-        print (final[0][1,2*self.kappa,0,0])
-        """
-
         for k in range (self.N):
             # Statistical dispersion
             M = np.asmatrix (np.zeros((2*self.khi*self.khi, final[k].shape[1]), dtype=complex))
@@ -480,7 +471,6 @@ class MPDO:
 
             # SVD
             X, S, Y = np.linalg.svd (M)
-            print (S)
 
             # Keep only kappa highest singular values
             for ik in range (2):
@@ -535,7 +525,7 @@ class MPDO:
                 sub = sub[j]
             sub = sub[0]
             # Finally we have the probability
-            prob[i] = sub
+            prob[i] = abs(sub)
 
         return prob
 
@@ -554,11 +544,7 @@ class MPDO:
         """
         Measure all qbits, and leave the state in the collapsed state
         """
-        ket = self.get_ket()
-
-        # Individual probabilities
-        distribution = list(map(lambda x : abs(x)**2, ket))
-
+        distribution = self.get_probabilities ()
         cumul_distrib = [distribution[0]]
         for k in range (1, len(distribution)):
             cumul_distrib.append( cumul_distrib[-1] + distribution[k] )
@@ -585,7 +571,7 @@ class MPDO:
         """
         Measure a single qbit, and leave the state in the collapsed state
         """
-        ket = self.get_ket ()
+        distribution = self.get_probabilities ()
 
         # Computing probability to get a |0>
         p0 = 0
@@ -593,10 +579,10 @@ class MPDO:
             lsb = i & (pow(2, qbit)-1)
             msb = i & (~lsb)
             msb <<= 1
-            p0 += abs(ket[msb | lsb])**2
+            p0 += distribution[msb | lsb]
 
         # Sometimes not equal to 1 because of SVD approximation
-        total = sum(map(lambda x:abs(x)**2, ket))
+        total = sum (distribution)
         rand = np.random.random () * total
 
         # The outcome is |0>
