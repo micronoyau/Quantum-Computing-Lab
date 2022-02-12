@@ -208,10 +208,8 @@ class SurfaceCode:
         print ("Dual :")
         print(dual_de_graph.edges(data=True))
 
-        nx.draw (primal_de_graph, with_labels=True, node_color="red")
-        nx.draw (dual_de_graph, with_labels=True, node_color="green")
-
-        plt.show ()
+        nx.drawing.nx_agraph.write_dot (primal_de_graph, "primal_de.dot")
+        nx.drawing.nx_agraph.write_dot (dual_de_graph, "dual_de.dot")
 
         print ("Computing matchings ...")
 
@@ -260,8 +258,7 @@ class SurfaceCode:
 
 s = SurfaceCode (3)
 s.cycle ()
-s.cycle (errors={5:[('X', 3),]})
-s.cycle (errors={3:[('X', 6),]})
+s.cycle (errors={2:[('X', 1),('X', 6),('X', 9)], 4:[('Z', 7),]})
 s.cycle ()
 s.post_analysis ()
 
