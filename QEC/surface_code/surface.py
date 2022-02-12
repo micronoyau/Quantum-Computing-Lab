@@ -216,6 +216,28 @@ class SurfaceCode:
         primal_matching = nx.min_weight_matching (primal_de_graph)
         dual_matching = nx.min_weight_matching (dual_de_graph)
 
+        # For every node on the left border of the primal lattice
+        for n in filter (lambda node : node[0] == 0, primal_de_graph.nodes):
+            # Check if unmatched
+            if not sum (1 for _ in filter(lambda x : x[0] == n or x[1] == n, primal_matching)):
+                # If yes, connect to boundary
+                primal_matching.add ((n, (-1, n[1], n[2])))
+
+        # For every node on the right border of the primal lattice
+        for n in filter (lambda node : node[0] == self.d-2, primal_de_graph.nodes):
+            if not sum (1 for _ in filter(lambda x : x[0] == n or x[1] == n, primal_matching)):
+                primal_matching.add ((n, (self.d-1, n[1], n[2])))
+
+        # For every node on the left border of the dual lattice
+        for n in filter (lambda node : node[1] == 0, dual_de_graph.nodes):
+            if not sum (1 for _ in filter(lambda x : x[0] == n or x[1] == n, dual_matching)):
+                dual_matching.add ((n, (n[0], -1, n[2])))
+
+        # For every node on the right border of the dual lattice
+        for n in filter (lambda node : node[1] == self.d-2, dual_de_graph.nodes):
+            if not sum (1 for _ in filter(lambda x : x[0] == n or x[1] == n, dual_matching)):
+                dual_matching.add ((n, (n[0], self.d-1, n[2])))
+
         print ("Primal :")
         print (primal_matching)
         print ("Dual :")
@@ -239,6 +261,7 @@ class SurfaceCode:
         the end of cycle  [i].
         """
         self.prepare_cycle ()
+        self._apply_cycle_errors (errors, 0)
         self.step1 ()
         self._apply_cycle_errors (errors, 1)
         self.step2 ()
@@ -258,8 +281,9 @@ class SurfaceCode:
 
 s = SurfaceCode (3)
 s.cycle ()
-s.cycle (errors={2:[('X', 1),('X', 6),('X', 9)], 4:[('Z', 7),]})
-s.cycle ()
+s.cycle (errors={2:[('X', 2)], 4:[('Z', 7),]})
+s.cycle (errors={0:[('X',11),]})
+#s.cycle (errors={1:[('Z',10),]})
 s.post_analysis ()
 
 #counts = execute (s.qc, Aer.get_backend('qasm_simulator'), shots=10).result().get_counts()
